@@ -133,6 +133,14 @@ class LoadAnnotations(object):
         gt_semantic_seg = mmcv.imfrombytes(
             img_bytes, flag='unchanged',
             backend=self.imdecode_backend).squeeze().astype(np.uint8)
+        # If loaded annotation has multiple channels (e.g., RGB mask),
+        # convert it to single-channel label map. Many annotation masks are
+        # saved as RGB images where the label is encoded in a single channel
+        # (or as a palette). Here we conservatively take the first channel
+        # when shape is (H, W, 3) to obtain a single-channel HxW array.
+        if gt_semantic_seg.ndim == 3 and gt_semantic_seg.shape[2] == 3:
+            gt_semantic_seg = gt_semantic_seg[..., 0]
+            gt_semantic_seg[gt_semantic_seg == 255] = 1 # 只能针对二元背景(0,0,0)和伤口(255,255,255)的情况进行修改
         # modify if custom classes
         if results.get('label_map', None) is not None:
             # Add deep copy to solve bug of repeatedly
