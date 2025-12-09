@@ -43,6 +43,8 @@ To install [Natten](https://github.com/SHI-Labs/NATTEN), you should modify the f
 pip install natten==0.17.3+torch210cu121 -f https://shi-labs.com/natten/wheels/
 ```
 
+> !!！ 配置时的注意事项：Natten pip非常慢，建议下载到本地再安装
+
 The [Selective Scan 2D](https://github.com/MzeroMiko/VMamba) can be install with:
 ```shell
 cd kernels/selective_scan && pip install .
@@ -149,3 +151,38 @@ Our implementation is based on [MMSegmentaion](https://github.com/open-mmlab/mms
     year={2025}
 }
 ```
+
+# Note
+
+pretrained/
+    - 放预训练文件，我之前只用了base
+
+segmentation/data/wound/foot
+    - annotations
+        - training
+        - validation
+    - images
+        - training
+        - validation
+
+segmentation/outputs
+    - b_wound_full
+        - iter_104000.pth
+
+
+运行指令
+```
+python tools/train.py \
+  local_configs/segman/base/segman_b_wound.py \
+  --work-dir outputs/b_wound_full \
+  --gpu-id 0
+```
+
+```
+python tools/test.py \
+  local_configs/segman/base/segman_b_wound.py \
+  --checkpoint outputs/b_wound_full/iter_104000.pth \
+  --eval mIoU mDice mFscore
+```
+
+除此之外还有可视化，生成图表，都是一些命名为wound的文件
