@@ -1,2 +1,3 @@
 data/
 mmseg/__pycache__/
+outputs/
