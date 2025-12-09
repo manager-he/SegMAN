@@ -15,8 +15,8 @@ def main():
         '--device', default='cuda:0', help='Device used for inference')
     parser.add_argument(
         '--palette',
-        default='cityscapes',
-        help='Color palette used for segmentation map')
+        default='auto',
+        help='Color palette name. Use "auto" to load from checkpoint/dataset')
     parser.add_argument('--out-file', default=None, help='Path to output file')
     args = parser.parse_args()
 
@@ -25,8 +25,18 @@ def main():
     model = init_segmentor(args.config, args.checkpoint, device=args.device)
     # test a single image
     result = inference_segmentor(model, args.img)
+    # choose palette: prefer checkpoint/dataset palette if available
+    if args.palette == 'auto':
+        palette = getattr(model, 'PALETTE', None)
+    else:
+        palette = get_palette(args.palette)
+
+    if palette is None:
+        # fallback to cityscapes if nothing provided
+        palette = get_palette('cityscapes')
+
     # show the results
-    show_result_pyplot(model, args.img, result, get_palette(args.palette),out_file=args.out_file, opacity=0.9)
+    show_result_pyplot(model, args.img, result, palette, out_file=args.out_file, opacity=0.9)
 
 
 if __name__ == '__main__':
