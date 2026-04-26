@@ -835,7 +835,15 @@ class MLP(nn.Module):
 
 @HEADS.register_module()
 class SegMANDecoder(BaseDecodeHead):
-    def __init__(self, image_size=512,channel_split=False,short_cut=False, interpolate_mode='bilinear',use_rpb=False,
+    def __init__(self,
+                 image_size=512,
+                 channel_split=False,
+                 short_cut=False,
+                 interpolate_mode='bilinear',
+                 use_rpb=False,
+                 boundary_enabled=False,
+                 boundary_loss_weight=0.2,
+                 boundary_kernel_size=3,
                   **kwargs):
         super(SegMANDecoder, self).__init__(input_transform="multiple_select", **kwargs) #input_transform='multiple_select'
         image_size = to_2tuple(image_size)
@@ -901,6 +909,23 @@ class SegMANDecoder(BaseDecodeHead):
 
         self.interpolate_mode = interpolate_mode
 
+        self.boundary_enabled = boundary_enabled
+        self.boundary_loss_weight = boundary_loss_weight
+        self.boundary_kernel_size = max(3, int(boundary_kernel_size))
+        if self.boundary_kernel_size % 2 == 0:
+            self.boundary_kernel_size += 1
+
+        if self.boundary_enabled:
+            self.boundary_head = nn.Sequential(
+                DepthwiseSeparableConvModule(
+                    self.embed_dim,
+                    self.embed_dim,
+                    kernel_size=3,
+                    padding=1,
+                    norm_cfg=dict(type='SyncBN', requires_grad=True),
+                    act_cfg=dict(type='ReLU')),
+                nn.Conv2d(self.embed_dim, 1, kernel_size=1))
+
 
     def forward_mlp_decoder(self, inputs):
         c1, c2, c3, c4 = inputs
@@ -959,10 +984,61 @@ class SegMANDecoder(BaseDecodeHead):
 
         return out
 
- 
+
+    def _build_boundary_target(self, seg_label):
+        valid_mask = seg_label.ne(self.ignore_index)
+        seg_label = seg_label.clone()
+        seg_label[~valid_mask] = 0
+        seg_label = seg_label.float()
+
+        pad = self.boundary_kernel_size // 2
+        max_map = F.max_pool2d(seg_label, kernel_size=self.boundary_kernel_size, stride=1, padding=pad)
+        min_map = -F.max_pool2d(-seg_label, kernel_size=self.boundary_kernel_size, stride=1, padding=pad)
+        boundary_target = (max_map - min_map).gt(0).float()
+
+        invalid_neighborhood = F.max_pool2d(
+            (~valid_mask).float(),
+            kernel_size=self.boundary_kernel_size,
+            stride=1,
+            padding=pad).gt(0)
+        valid_loss_mask = (~invalid_neighborhood).float()
+        boundary_target = boundary_target * valid_loss_mask
+        return boundary_target, valid_loss_mask
+
+    def _loss_boundary(self, boundary_logit, seg_label):
+        boundary_logit = resize(
+            input=boundary_logit,
+            size=seg_label.shape[2:],
+            mode='bilinear',
+            align_corners=self.align_corners)
+
+        with torch.no_grad():
+            boundary_target, valid_loss_mask = self._build_boundary_target(seg_label)
+
+        boundary_loss = F.binary_cross_entropy_with_logits(
+            boundary_logit, boundary_target, reduction='none')
+        boundary_loss = (boundary_loss * valid_loss_mask).sum() / valid_loss_mask.sum().clamp(min=1.0)
+        return boundary_loss
+
     def forward(self, inputs):
         x = self._transform_inputs(inputs)
         x, c2, c3, c4 = self.forward_mlp_decoder(x)
         x = self.forward_winssm(x, c2, c3, c4)
-        output = self.cls_seg(x)
-        return output
+        seg_logits = self.cls_seg(x)
+        if self.training and self.boundary_enabled and self.boundary_loss_weight > 0:
+            boundary_logits = self.boundary_head(x)
+            return seg_logits, boundary_logits
+        return seg_logits
+
+    def losses(self, seg_logit, seg_label):
+        boundary_logit = None
+        if isinstance(seg_logit, (tuple, list)):
+            seg_logit, boundary_logit = seg_logit
+
+        losses = super().losses(seg_logit, seg_label)
+
+        if boundary_logit is not None:
+            losses['loss_boundary'] = self._loss_boundary(
+                boundary_logit, seg_label) * self.boundary_loss_weight
+
+        return losses

@@ -137,3 +137,28 @@ T: embed_dims [32,64,144,192], depths [2,2,4,2]
 S: embed_dims [64,144,288,512], depths [2,2,10,4]
 B: embed_dims [96,160,364,560], depths [4,4,18,4]
 L: embed_dims [96,192,432,640], depths [4,4,28,4]
+
+
+# Decoder-boundery
+
+解码头新增参数：boundary_enabled、boundary_loss_weight、boundary_kernel_size。
+新增轻量边界头：DepthwiseSeparableConvModule + 1x1 conv，输出单通道边界 logit。
+if self.boundary_enabled:
+    self.boundary_head = nn.Sequential(
+        DepthwiseSeparableConvModule(
+            self.embed_dim,
+            self.embed_dim,
+            kernel_size=3,
+            padding=1,
+            norm_cfg=dict(type='SyncBN', requires_grad=True),
+            act_cfg=dict(type='ReLU')),
+        nn.Conv2d(self.embed_dim, 1, kernel_size=1))
+
+边界 GT 形态学生成与分辨率对齐
+* segman_decoder.py:998 _build_boundary_target
+* segman_decoder.py:1008 _loss_boundary
+用 max_pool/min_pool 的形态学梯度生成边界目标。对 ignore 区域及其邻域做 loss mask，避免噪声监督。
+边界 logit 在计算损失前 resize 到 GT 尺寸，保证分辨率严格对齐。
+
+复写基类的losses函数，使得计算时加上边界损失
+总损失中新增 loss_boundary，按 boundary_loss_weight 加权。
