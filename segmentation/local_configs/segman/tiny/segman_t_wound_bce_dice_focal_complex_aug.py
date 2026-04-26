@@ -1,6 +1,6 @@
 _base_ = [
     '../../_base_/models/segman.py',
-    '../../_base_/fuseg_wound_data_aug.py',
+    '../../_base_/datasets/fuseg_wound_data_aug.py',
     '../../_base_/default_runtime.py',
     '../../_base_/schedules/schedule_160k_adamw.py'
 ]
