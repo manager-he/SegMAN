@@ -3,3 +3,5 @@ pretrained/
 segmantation/data/
 .venv/
 **.whl
+work_dirs/
+**.zip
