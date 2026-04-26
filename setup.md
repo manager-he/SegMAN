@@ -14,13 +14,14 @@ source .venv/bin/activate
 ```
 nvidia-smi: 显卡驱动支持的最高CUDA
 nvcc -v: 当前系统环境变量正在使用的CUDA toolkit
-pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cpu # cpu only
 # ROCM 5.6 (Linux only)
-pip install torch==2.2.0 torchvision==0.17.0 --index-url https://download.pytorch.org/whl/rocm5.6
+pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/rocm5.6
 # CUDA 11.8
-pip install torch==2.2.0 torchvision==0.17.0 --index-url https://download.pytorch.org/whl/cu118
+pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118
 # CUDA 12.1
-pip install torch==2.2.0 torchvision==0.17.0 --index-url https://download.pytorch.org/whl/cu121
+pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu121
+# CPU only
+pip install torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cpu
 ```
 
 
@@ -41,6 +42,8 @@ pip install "numpy<2.0"
 modify mmcv to support torch>2.1.0
 replace 75 line of site-packages/mmcv/parallel/_functions.py
 ```python
+from packaging import version # Maybe Need
+
 if version.parse(torch.__version__) >= version.parse('2.1.0'):
     streams = [_get_stream(torch.device("cuda", device)) for device in target_gpus]
 else:
@@ -51,14 +54,13 @@ else:
 从该网址下载对应的whl文件:https://shi-labs.com/natten/wheels/
 ```bash
 cd asserts
-wget http://shi-labs.com/natten/wheels/cu121/torch2.2.0/natten-0.17.3%2Btorch220cu121-cp310-cp310-linux_x86_64.whl
-pip install natten-0.17.3+torch230cpu-cp310-cp310-linux_x86_64.whl
-cd ..
+wget http://shi-labs.com/natten/wheels/cu118/torch2.1.0/natten-0.17.3%2Btorch210cu118-cp310-cp310-linux_x86_64.whl
+pip install natten-0.17.3+...
 ```
 
 selective Scan 2D: CUDA加速内核,虚拟机安装不了
 ```bash
-cd kernels/selective_scan && pip install .
+cd kernels/selective_scan && pip install --no-build-isolation .
 pip install -r requirements.txt
 ```
 
@@ -93,3 +95,4 @@ You should upload the zip file from ML/Medical_segment/wound_data.zip to segment
 
 Download the ImageNet-1k pretrained weights here and put them in a folder pretrained/
 https://drive.google.com/drive/folders/1QYU7nhpe0ddH7bPxI7VH4drc__07uEHs?usp=sharing
+无需解压
