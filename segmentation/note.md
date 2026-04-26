@@ -137,3 +137,57 @@ T: embed_dims [32,64,144,192], depths [2,2,4,2]
 S: embed_dims [64,144,288,512], depths [2,2,10,4]
 B: embed_dims [96,160,364,560], depths [4,4,18,4]
 L: embed_dims [96,192,432,640], depths [4,4,28,4]
+
+
+# out channels 修复
+
+我记录在某个地方了
+
+# focal loss 修复
+
+Focal loss 的算法会用 out_channels 等价 num_classes，参与 one-hot 计算，就导致one-hot只对一个类别进行编码
+
+因此增加对out_channels为1的特殊判断
+```python
+# Binary segmentation with out_channels=1 provides labels in {0, 1}
+# and should be treated as dense binary targets instead of class
+# indices, otherwise one_hot(num_classes=1) will fail on label=1.
+if num_classes == 1 and target.dim() == 1:
+    target = target.type_as(pred).view(-1, 1)
+    one_hot_target = target
+    calculate_loss_func = py_sigmoid_focal_loss
+```
+
+# 对比实验
+
+segman-tiny basic: 24k iters
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background | 99.81 | 99.93 | 99.91 | 99.91  |   99.89   | 99.93  |
+|   wound    | 85.64 | 90.77 | 92.26 | 92.26  |    93.8   | 90.77  |
++------------+-------+-------+-------+--------+-----------+--------+
+Summary:
+
++-------+-------+-------+-------+---------+------------+---------+
+|  aAcc |  mIoU |  mAcc | mDice | mFscore | mPrecision | mRecall |
++-------+-------+-------+-------+---------+------------+---------+
+| 99.81 | 92.72 | 95.35 | 96.08 |  96.08  |   96.85    |  95.35  |
++-------+-------+-------+-------+---------+------------+---------+
+
+data agumentation: 效果更差了
+
+segman-tiny combined loss: 24k
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background | 99.79 | 99.86 |  99.9 |  99.9  |   99.93   | 99.86  |
+|   wound    | 84.98 | 94.76 | 91.88 | 91.88  |   89.18   | 94.76  |
++------------+-------+-------+-------+--------+-----------+--------+
+Summary:
+
++------+-------+-------+-------+---------+------------+---------+
+| aAcc |  mIoU |  mAcc | mDice | mFscore | mPrecision | mRecall |
++------+-------+-------+-------+---------+------------+---------+
+| 99.8 | 92.39 | 97.31 | 95.89 |  95.89  |   94.56    |  97.31  |
++------+-------+-------+-------+---------+------------+---------+

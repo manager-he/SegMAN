@@ -17,9 +17,9 @@ LOG_INTERVAL="${LOG_INTERVAL:-50}"
 echo "config,work_dir,checkpoint,mIoU,mDice,mFscore,aAcc" > "$SUMMARY_CSV"
 
 CONFIGS=(
-  "segmentation/local_configs/segman/tiny/segman_t_wound_bce_basic_aug.py"
+  # "segmentation/local_configs/segman/tiny/segman_t_wound_bce_basic_aug.py"
   # "segmentation/local_configs/segman/tiny/segman_t_wound_bce_complex_aug.py"
-  # "segmentation/local_configs/segman/tiny/segman_t_wound_bce_dice_focal_complex_aug.py"
+  "segmentation/local_configs/segman/tiny/segman_t_wound_bce_dice_focal_complex_aug.py"
 )
 
 for cfg in "${CONFIGS[@]}"; do
