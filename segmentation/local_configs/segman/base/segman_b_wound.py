@@ -21,9 +21,10 @@ model = dict(
         feat_proj_dim=320,
         dropout_ratio=0.1,
         num_classes=2,
+        out_channels=1,        
         norm_cfg=norm_cfg,
         align_corners=False,
-        loss_decode=dict(type='CrossEntropyLoss', use_sigmoid=False, loss_weight=1.0)),
+        loss_decode=dict(type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0)),
     # model training and testing settings
     train_cfg=dict(),
     test_cfg=dict(mode='slide', crop_size=(1024,1024), stride=(768,768)))

@@ -20,6 +20,7 @@ model = dict(
         feat_proj_dim=192,
         dropout_ratio=0.1,
         num_classes=2,
+        out_channels=1,
         norm_cfg=norm_cfg,
         align_corners=False,
         loss_decode=dict(
