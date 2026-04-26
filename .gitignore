@@ -1,3 +1,5 @@
 kernels/
 pretrained/
 segmantation/data/
+.venv/
+**.whl
