@@ -4,3 +4,4 @@ segmantation/data/
 .venv/
 **.whl
 **.zip
+work_dirs/
