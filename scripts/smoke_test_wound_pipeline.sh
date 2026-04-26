@@ -15,8 +15,7 @@ python segmentation/tools/train.py "$CFG" \
     runner.max_iters=20 \
     checkpoint_config.interval=20 \
     log_config.interval=5 \
-    data.samples_per_gpu=1 \
-    data.workers_per_gpu=1
+    data.samples_per_gpu=2
 
 CKPT="$WORK_DIR/iter_20.pth"
 if [[ ! -f "$CKPT" ]]; then

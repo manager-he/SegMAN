@@ -1,6 +1,6 @@
 _base_ = [
     '../../_base_/models/segman.py',
-    '../../_base_/fuseg_wound_data_aug.py',
+    '../../_base_/datasets/wound_foot.py',
     '../../_base_/default_runtime.py',
     '../../_base_/schedules/schedule_160k_adamw.py'
 ]
@@ -20,6 +20,7 @@ model = dict(
         feat_proj_dim=192,
         dropout_ratio=0.1,
         num_classes=2,
+        out_channels=1,
         norm_cfg=norm_cfg,
         align_corners=False,
         loss_decode=[

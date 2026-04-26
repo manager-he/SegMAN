@@ -8,11 +8,17 @@ OUT_ROOT="segmentation/work_dirs/wound_tiny_ablation"
 mkdir -p "$OUT_ROOT"
 SUMMARY_CSV="$OUT_ROOT/summary_metrics.csv"
 
+# Fast ablation defaults (override with env vars if needed)
+MAX_ITERS="${MAX_ITERS:-24000}"
+CKPT_INTERVAL="${CKPT_INTERVAL:-4000}"
+EVAL_INTERVAL="${EVAL_INTERVAL:-4000}"
+LOG_INTERVAL="${LOG_INTERVAL:-50}"
+
 echo "config,work_dir,checkpoint,mIoU,mDice,mFscore,aAcc" > "$SUMMARY_CSV"
 
 CONFIGS=(
-  "segmentation/local_configs/segman/tiny/segman_t_wound_bce_basic_aug.py"
-  "segmentation/local_configs/segman/tiny/segman_t_wound_bce_complex_aug.py"
+  # "segmentation/local_configs/segman/tiny/segman_t_wound_bce_basic_aug.py"
+  # "segmentation/local_configs/segman/tiny/segman_t_wound_bce_complex_aug.py"
   "segmentation/local_configs/segman/tiny/segman_t_wound_bce_dice_focal_complex_aug.py"
 )
 
@@ -23,7 +29,13 @@ for cfg in "${CONFIGS[@]}"; do
   mkdir -p "$work_dir" "$eval_dir"
 
   echo "[Train] $exp_name"
-  python segmentation/tools/train.py "$cfg" --work-dir "$work_dir"
+  CUDA_LAUNCH_BLOCKING=1 python segmentation/tools/train.py "$cfg" \
+    --work-dir "$work_dir" \
+    --cfg-options \
+      runner.max_iters="$MAX_ITERS" \
+      checkpoint_config.interval="$CKPT_INTERVAL" \
+      evaluation.interval="$EVAL_INTERVAL" \
+      log_config.interval="$LOG_INTERVAL"
 
   ckpt=""
   if [[ -f "$work_dir/latest.pth" ]]; then
@@ -60,3 +72,4 @@ done
 
 echo "[Done] All runs complete."
 echo "[Done] Summary: $SUMMARY_CSV"
+echo "[Done] Overrides: max_iters=$MAX_ITERS, ckpt_interval=$CKPT_INTERVAL, eval_interval=$EVAL_INTERVAL, log_interval=$LOG_INTERVAL"
