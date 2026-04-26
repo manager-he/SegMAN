@@ -269,7 +269,14 @@ class FocalLoss(nn.Module):
             reduction_override if reduction_override else self.reduction)
         if self.use_sigmoid:
             num_classes = pred.size(1)
-            if torch.cuda.is_available() and pred.is_cuda:
+            # Binary segmentation with out_channels=1 provides labels in {0, 1}
+            # and should be treated as dense binary targets instead of class
+            # indices, otherwise one_hot(num_classes=1) will fail on label=1.
+            if num_classes == 1 and target.dim() == 1:
+                target = target.type_as(pred).view(-1, 1)
+                one_hot_target = target
+                calculate_loss_func = py_sigmoid_focal_loss
+            elif torch.cuda.is_available() and pred.is_cuda:
                 if target.dim() == 1:
                     one_hot_target = F.one_hot(target, num_classes=num_classes)
                 else:
