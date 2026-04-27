@@ -21,6 +21,7 @@ model = dict(
         dropout_ratio=0.1,
         num_classes=2,
         out_channels=1,
+        threshold=0.5,
         norm_cfg=norm_cfg,
         align_corners=False,
         loss_decode=[

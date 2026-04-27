@@ -138,6 +138,29 @@ S: embed_dims [64,144,288,512], depths [2,2,10,4]
 B: embed_dims [96,160,364,560], depths [4,4,18,4]
 L: embed_dims [96,192,432,640], depths [4,4,28,4]
 
+# Decoder-boundery
+
+解码头新增参数：boundary_enabled、boundary_loss_weight、boundary_kernel_size。
+新增轻量边界头：DepthwiseSeparableConvModule + 1x1 conv，输出单通道边界 logit。
+if self.boundary_enabled:
+    self.boundary_head = nn.Sequential(
+        DepthwiseSeparableConvModule(
+            self.embed_dim,
+            self.embed_dim,
+            kernel_size=3,
+            padding=1,
+            norm_cfg=dict(type='SyncBN', requires_grad=True),
+            act_cfg=dict(type='ReLU')),
+        nn.Conv2d(self.embed_dim, 1, kernel_size=1))
+
+边界 GT 形态学生成与分辨率对齐
+* segman_decoder.py:998 _build_boundary_target
+* segman_decoder.py:1008 _loss_boundary
+用 max_pool/min_pool 的形态学梯度生成边界目标。对 ignore 区域及其邻域做 loss mask，避免噪声监督。
+边界 logit 在计算损失前 resize 到 GT 尺寸，保证分辨率严格对齐。
+
+复写基类的losses函数，使得计算时加上边界损失
+总损失中新增 loss_boundary，按 boundary_loss_weight 加权。
 
 # out channels 修复
 
@@ -160,6 +183,15 @@ if num_classes == 1 and target.dim() == 1:
 
 # 对比实验
 
+segman-base basic: 160k iters
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background | 99.81 | 99.89 | 99.91 | 99.91  |   99.92   | 99.89  |
+|   wound    | 86.12 | 93.82 | 92.54 | 92.54  |    91.3   | 93.82  |
++------------+-------+-------+-------+--------+-----------+--------+
+
+
 segman-tiny basic: 24k iters
 +------------+-------+-------+-------+--------+-----------+--------+
 |   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
@@ -167,15 +199,16 @@ segman-tiny basic: 24k iters
 | background | 99.81 | 99.93 | 99.91 | 99.91  |   99.89   | 99.93  |
 |   wound    | 85.64 | 90.77 | 92.26 | 92.26  |    93.8   | 90.77  |
 +------------+-------+-------+-------+--------+-----------+--------+
-Summary:
-
-+-------+-------+-------+-------+---------+------------+---------+
-|  aAcc |  mIoU |  mAcc | mDice | mFscore | mPrecision | mRecall |
-+-------+-------+-------+-------+---------+------------+---------+
-| 99.81 | 92.72 | 95.35 | 96.08 |  96.08  |   96.85    |  95.35  |
-+-------+-------+-------+-------+---------+------------+---------+
 
 data agumentation: 效果更差了
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background | 99.39 | 99.98 | 99.69 | 99.69  |   99.41   | 99.98  |
+|   wound    | 51.09 |  52.0 | 67.63 | 67.63  |    96.7   |  52.0  |
++------------+-------+-------+-------+--------+-----------+--------+
+
+大模型分析：RandomCutOut挖洞，CLAHE增大对比度对图像有害
 
 segman-tiny combined loss: 24k
 +------------+-------+-------+-------+--------+-----------+--------+
@@ -184,10 +217,12 @@ segman-tiny combined loss: 24k
 | background | 99.79 | 99.86 |  99.9 |  99.9  |   99.93   | 99.86  |
 |   wound    | 84.98 | 94.76 | 91.88 | 91.88  |   89.18   | 94.76  |
 +------------+-------+-------+-------+--------+-----------+--------+
-Summary:
 
-+------+-------+-------+-------+---------+------------+---------+
-| aAcc |  mIoU |  mAcc | mDice | mFscore | mPrecision | mRecall |
-+------+-------+-------+-------+---------+------------+---------+
-| 99.8 | 92.39 | 97.31 | 95.89 |  95.89  |   94.56    |  97.31  |
-+------+-------+-------+-------+---------+------------+---------+
+segman-tiny basic + boundary: 24k
+
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background | 99.81 | 99.92 |  99.9 |  99.9  |   99.88   | 99.92  |
+|   wound    | 85.42 | 90.62 | 92.14 | 92.14  |    93.7   | 90.62  |
++------------+-------+-------+-------+--------+-----------+--------+
