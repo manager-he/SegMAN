@@ -138,6 +138,23 @@ S: embed_dims [64,144,288,512], depths [2,2,10,4]
 B: embed_dims [96,160,364,560], depths [4,4,18,4]
 L: embed_dims [96,192,432,640], depths [4,4,28,4]
 
+# Data augmentation
+
+# Complex augmentation for wound data with illumination/device/domain shifts.
+train_pipeline = [
+    dict(type='LoadImageFromFile'),
+    dict(type='LoadAnnotations'),
+    dict(type='Resize', img_scale=(1024, 1024), ratio_range=(0.5, 2.0)),
+    dict(type='RandomCrop', crop_size=crop_size, cat_max_ratio=0.75),
+    dict(type='RandomFlip', prob=0.5, direction='horizontal'),
+    dict(type='RandomFlip', prob=0.5, direction='vertical'),
+    dict(type='PhotoMetricDistortion'),
+    dict(type='Normalize', **img_norm_cfg),
+    dict(type='Pad', size=crop_size, pad_val=0, seg_pad_val=255),
+    dict(type='DefaultFormatBundle'),
+    dict(type='Collect', keys=['img', 'gt_semantic_seg']),
+]
+
 # Decoder-boundery
 
 解码头新增参数：boundary_enabled、boundary_loss_weight、boundary_kernel_size。
@@ -183,6 +200,15 @@ if num_classes == 1 and target.dim() == 1:
 
 # 对比实验
 
+segman-base basic: 160k iters
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background | 99.81 | 99.89 | 99.91 | 99.91  |   99.92   | 99.89  |
+|   wound    | 86.12 | 93.82 | 92.54 | 92.54  |    91.3   | 93.82  |
++------------+-------+-------+-------+--------+-----------+--------+
+
+
 segman-tiny basic: 24k iters
 +------------+-------+-------+-------+--------+-----------+--------+
 |   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
@@ -190,15 +216,25 @@ segman-tiny basic: 24k iters
 | background | 99.81 | 99.93 | 99.91 | 99.91  |   99.89   | 99.93  |
 |   wound    | 85.64 | 90.77 | 92.26 | 92.26  |    93.8   | 90.77  |
 +------------+-------+-------+-------+--------+-----------+--------+
-Summary:
-
-+-------+-------+-------+-------+---------+------------+---------+
-|  aAcc |  mIoU |  mAcc | mDice | mFscore | mPrecision | mRecall |
-+-------+-------+-------+-------+---------+------------+---------+
-| 99.81 | 92.72 | 95.35 | 96.08 |  96.08  |   96.85    |  95.35  |
-+-------+-------+-------+-------+---------+------------+---------+
 
 data agumentation: 效果更差了
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background | 99.39 | 99.98 | 99.69 | 99.69  |   99.41   | 99.98  |
+|   wound    | 51.09 |  52.0 | 67.63 | 67.63  |    96.7   |  52.0  |
++------------+-------+-------+-------+--------+-----------+--------+
+data agumentation 2: 24k iters
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background |  99.8 | 99.92 |  99.9 |  99.9  |   99.88   | 99.92  |
+|   wound    | 84.96 |  90.3 | 91.87 | 91.87  |    93.5   |  90.3  |
++------------+-------+-------+-------+--------+-----------+--------+
+和basic配置持平，确定为数据增强方案了
+
+
+大模型分析：RandomCutOut挖洞，CLAHE增大对比度对图像有害
 
 segman-tiny combined loss: 24k
 +------------+-------+-------+-------+--------+-----------+--------+
@@ -207,10 +243,12 @@ segman-tiny combined loss: 24k
 | background | 99.79 | 99.86 |  99.9 |  99.9  |   99.93   | 99.86  |
 |   wound    | 84.98 | 94.76 | 91.88 | 91.88  |   89.18   | 94.76  |
 +------------+-------+-------+-------+--------+-----------+--------+
-Summary:
 
-+------+-------+-------+-------+---------+------------+---------+
-| aAcc |  mIoU |  mAcc | mDice | mFscore | mPrecision | mRecall |
-+------+-------+-------+-------+---------+------------+---------+
-| 99.8 | 92.39 | 97.31 | 95.89 |  95.89  |   94.56    |  97.31  |
-+------+-------+-------+-------+---------+------------+---------+
+segman-tiny basic + boundary: 24k
+
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background | 99.81 | 99.92 |  99.9 |  99.9  |   99.88   | 99.92  |
+|   wound    | 85.42 | 90.62 | 92.14 | 92.14  |    93.7   | 90.62  |
++------------+-------+-------+-------+--------+-----------+--------+
