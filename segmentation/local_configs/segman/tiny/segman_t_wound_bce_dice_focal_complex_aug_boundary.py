@@ -27,10 +27,11 @@ model = dict(
         threshold=0.5,
         norm_cfg=norm_cfg,
         align_corners=False,
-        loss_decode=dict(
-            type='CrossEntropyLoss',
-            use_sigmoid=True,
-            loss_weight=1.0)),
+        loss_decode=[
+            dict(type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0, loss_name='loss_bce'),
+            dict(type='DiceLoss', loss_weight=1.0, loss_name='loss_dice'),
+            dict(type='FocalLoss', use_sigmoid=True, gamma=2.0, alpha=0.25, loss_weight=1.0, loss_name='loss_focal')
+        ]),
     train_cfg=dict(),
     test_cfg=dict(mode='slide', crop_size=(1024, 1024), stride=(768, 768)))
 
