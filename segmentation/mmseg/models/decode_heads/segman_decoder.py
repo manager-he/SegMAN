@@ -1014,9 +1014,15 @@ class SegMANDecoder(BaseDecodeHead):
 
         with torch.no_grad():
             boundary_target, valid_loss_mask = self._build_boundary_target(seg_label)
+            # 动态计算正负样本比例
+            num_pos = boundary_target.sum().clamp(min=1.0)
+            num_neg = valid_loss_mask.sum() - num_pos
+            pos_weight = (num_neg / num_pos).clamp(max=20.0)  # 上限防止极端值
 
         boundary_loss = F.binary_cross_entropy_with_logits(
-            boundary_logit, boundary_target, reduction='none')
+            boundary_logit, boundary_target,
+            pos_weight=pos_weight,  # 加在这里
+            reduction='none')
         boundary_loss = (boundary_loss * valid_loss_mask).sum() / valid_loss_mask.sum().clamp(min=1.0)
         return boundary_loss
 
