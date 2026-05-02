@@ -4,8 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
-CFG="segmentation/local_configs/segman/tiny/segman_t_wound_bce_basic_aug.py"
-WORK_DIR="segmentation/work_dirs/smoke_t_wound_bce_basic"
+CFG="segmentation/local_configs/segman/tiny/segman_t_wound_bce_dice_focal_complex_aug.py"
+WORK_DIR="segmentation/work_dirs/smoke_t_wound_bce_dice_focal_complex_aug"
 
 echo "[Smoke] Training dry run start"
 python segmentation/tools/train.py "$CFG" \

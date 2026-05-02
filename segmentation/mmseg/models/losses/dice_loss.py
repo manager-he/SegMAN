@@ -103,12 +103,22 @@ class DiceLoss(nn.Module):
         else:
             class_weight = None
 
-        pred = F.softmax(pred, dim=1)
         num_classes = pred.shape[1]
-        one_hot_target = F.one_hot(
-            torch.clamp(target.long(), 0, num_classes - 1),
-            num_classes=num_classes)
         valid_mask = (target != self.ignore_index).long()
+
+        # Binary segmentation with out_channels=1 should use sigmoid and dense
+        # targets. softmax on a single channel is always 1 and leads to a
+        # degenerate zero dice loss.
+        if num_classes == 1:
+            pred = torch.sigmoid(pred)
+            target = torch.where(target == self.ignore_index,
+                                 target.new_tensor(0), target)
+            one_hot_target = target.float().unsqueeze(-1)
+        else:
+            pred = F.softmax(pred, dim=1)
+            one_hot_target = F.one_hot(
+                torch.clamp(target.long(), 0, num_classes - 1),
+                num_classes=num_classes)
 
         loss = self.loss_weight * dice_loss(
             pred,

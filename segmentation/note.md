@@ -198,6 +198,27 @@ if num_classes == 1 and target.dim() == 1:
     calculate_loss_func = py_sigmoid_focal_loss
 ```
 
+# Dice loss修复
+
+```python
+# Binary segmentation with out_channels=1 should use sigmoid and dense
+# targets. softmax on a single channel is always 1 and leads to a
+# degenerate zero dice loss.
+if num_classes == 1:
+    pred = torch.sigmoid(pred)
+    target = torch.where(target == self.ignore_index,
+                            target.new_tensor(0), target)
+    one_hot_target = target.float().unsqueeze(-1)
+else:
+    pred = F.softmax(pred, dim=1)
+    one_hot_target = F.one_hot(
+        torch.clamp(target.long(), 0, num_classes - 1),
+        num_classes=num_classes)
+```
+
+Dice loss的值训练开始时和BCE loss处于同一数量级，但训练后期BCE下降比Dice快很多
+
+
 # 对比实验
 
 segman-base basic: 160k iters
@@ -236,7 +257,7 @@ data agumentation 2: 24k iters
 
 大模型分析：RandomCutOut挖洞，CLAHE增大对比度对图像有害
 
-segman-tiny combined loss: 24k
+segman-tiny combined loss(BCE+FOCAL): 24k
 +------------+-------+-------+-------+--------+-----------+--------+
 |   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
 +------------+-------+-------+-------+--------+-----------+--------+
@@ -251,4 +272,29 @@ segman-tiny basic + boundary: 24k
 +------------+-------+-------+-------+--------+-----------+--------+
 | background | 99.81 | 99.92 |  99.9 |  99.9  |   99.88   | 99.92  |
 |   wound    | 85.42 | 90.62 | 92.14 | 92.14  |    93.7   | 90.62  |
++------------+-------+-------+-------+--------+-----------+--------+
+
+segman-tiny Dice+Focal: 80k
+
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background | 99.77 | 99.88 | 99.88 | 99.88  |   99.89   | 99.88  |
+|   wound    | 82.91 | 90.83 | 90.66 | 90.66  |   90.48   | 90.83  |
++------------+-------+-------+-------+--------+-----------+--------+
+
+segman-tiny BCE+Dice: 64k
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background |  99.8 |  99.9 |  99.9 |  99.9  |    99.9   |  99.9  |
+|   wound    | 84.98 | 91.93 | 91.88 | 91.88  |   91.83   | 91.93  |
++------------+-------+-------+-------+--------+-----------+--------+
+
+segman-tiny BCE+Dice+Focal(new alpha)(weight 0.5 1 0.5): 32k
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background | 99.79 | 99.91 | 99.89 | 99.89  |   99.88   | 99.91  |
+|   wound    |  84.2 | 90.64 | 91.42 | 91.42  |   92.22   | 90.64  |
 +------------+-------+-------+-------+--------+-----------+--------+
