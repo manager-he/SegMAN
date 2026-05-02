@@ -9,10 +9,10 @@ mkdir -p "$OUT_ROOT"
 SUMMARY_CSV="$OUT_ROOT/summary_metrics.csv"
 
 # Fast ablation defaults (override with env vars if needed)
-MAX_ITERS="${MAX_ITERS:-24000}"
-CKPT_INTERVAL="${CKPT_INTERVAL:-4000}"
-EVAL_INTERVAL="${EVAL_INTERVAL:-4000}"
-LOG_INTERVAL="${LOG_INTERVAL:-50}"
+MAX_ITERS="${MAX_ITERS:-32000}"
+CKPT_INTERVAL="${CKPT_INTERVAL:-8000}"
+EVAL_INTERVAL="${EVAL_INTERVAL:-8000}"
+LOG_INTERVAL="${LOG_INTERVAL:-100}"
 
 echo "config,work_dir,checkpoint,mIoU,mDice,mFscore,aAcc" > "$SUMMARY_CSV"
 
