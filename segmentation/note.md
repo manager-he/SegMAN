@@ -157,6 +157,20 @@ train_pipeline = [
 
 # Decoder-boundery
 
+decoder中新增c1特征的MLP，linear_fuse也融合四个分辨率下的特征
+前向传播时将所有特征上采样到c1的分辨率，再linear_fuse
+boundary head的挂载点改为接在linear_fuse输出的_c上
+
+```python
+self.linear_c1 = MLP(self.in_channels[0], self.feat_proj_dim)
+
+self.linear_fuse = ConvModule(
+                in_channels=self.feat_proj_dim*4, # *3 when c1 is ignore
+                out_channels=self.embed_dim,
+                kernel_size=1,
+                norm_cfg=dict(type='SyncBN', requires_grad=True))
+```
+
 解码头新增参数：boundary_enabled、boundary_loss_weight、boundary_kernel_size。
 新增轻量边界头：DepthwiseSeparableConvModule + 1x1 conv，输出单通道边界 logit。
 if self.boundary_enabled:
@@ -173,6 +187,48 @@ if self.boundary_enabled:
 边界 GT 形态学生成与分辨率对齐
 * segman_decoder.py:998 _build_boundary_target
 * segman_decoder.py:1008 _loss_boundary
+```python
+def _build_boundary_target(self, seg_label):
+    valid_mask = seg_label.ne(self.ignore_index)
+    seg_label = seg_label.clone()
+    seg_label[~valid_mask] = 0
+    seg_label = seg_label.float()
+
+    pad = self.boundary_kernel_size // 2
+    max_map = F.max_pool2d(seg_label, kernel_size=self.boundary_kernel_size, stride=1, padding=pad)
+    min_map = -F.max_pool2d(-seg_label, kernel_size=self.boundary_kernel_size, stride=1, padding=pad)
+    boundary_target = (max_map - min_map).gt(0).float()
+
+    invalid_neighborhood = F.max_pool2d(
+        (~valid_mask).float(),
+        kernel_size=self.boundary_kernel_size,
+        stride=1,
+        padding=pad).gt(0)
+    valid_loss_mask = (~invalid_neighborhood).float()
+    boundary_target = boundary_target * valid_loss_mask
+    return boundary_target, valid_loss_mask
+
+def _loss_boundary(self, boundary_logit, seg_label):
+    boundary_logit = resize(
+        input=boundary_logit,
+        size=seg_label.shape[2:],
+        mode='bilinear',
+        align_corners=self.align_corners)
+
+    with torch.no_grad():
+        boundary_target, valid_loss_mask = self._build_boundary_target(seg_label)
+        # 动态计算正负样本比例
+        num_pos = boundary_target.sum().clamp(min=1.0)
+        num_neg = valid_loss_mask.sum() - num_pos
+        pos_weight = (num_neg / num_pos).clamp(max=20.0)  # 上限防止极端值
+
+    boundary_loss = F.binary_cross_entropy_with_logits(
+        boundary_logit, boundary_target,
+        pos_weight=pos_weight,  # 加在这里
+        reduction='none')
+    boundary_loss = (boundary_loss * valid_loss_mask).sum() / valid_loss_mask.sum().clamp(min=1.0)
+    return boundary_loss
+```
 用 max_pool/min_pool 的形态学梯度生成边界目标。对 ignore 区域及其邻域做 loss mask，避免噪声监督。
 边界 logit 在计算损失前 resize 到 GT 尺寸，保证分辨率严格对齐。
 
@@ -303,6 +359,30 @@ segman-tiny BCE+Dice+Focal(new alpha)(weight 0.5 1 0.5): 32k
 | background | 99.79 | 99.91 | 99.89 | 99.89  |   99.88   | 99.91  |
 |   wound    |  84.2 | 90.64 | 91.42 | 91.42  |   92.22   | 90.64  |
 +------------+-------+-------+-------+--------+-----------+--------+
-|   wound    | 85.25 | 90.42 | 92.04 | 92.04  |   93.72   | 90.42  |
+
+segman-tiny BCE+Dice+Focal(new alpha)(weight 0.5 1 0.5) boundary: 30k
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background | 99.77 | 99.87 | 99.89 | 99.89  |    99.9   | 99.87  |
+|   wound    | 83.37 | 91.81 | 90.93 | 90.93  |   90.06   | 91.81  |
++------------+-------+-------+-------+--------+-----------+--------+
+
+segman-tiny BCE+Dice+Focal(new alpha)(weight 0.5 1 0.5) boundary(add c1): 120k
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+| background | 99.81 | 99.92 | 99.91 | 99.91  |   99.89   | 99.92  |
+|   wound    | 85.91 |  91.3 | 92.42 | 92.42  |   93.56   |  91.3  |
++------------+-------+-------+-------+--------+-----------+--------+
+
+
+Final Result
++------------+-------+-------+-------+--------+-----------+--------+
+|   Class    |  IoU  |  Acc  |  Dice | Fscore | Precision | Recall |
++------------+-------+-------+-------+--------+-----------+--------+
+|   basic    | 83.54 | 88.95 | 91.03 | 91.03  |   93.21   | 88.95  |
+|    loss    |  84.2 | 90.64 | 91.42 | 91.42  |   92.22   | 90.64  |
+|    ours    | 85.91 |  91.3 | 92.42 | 92.42  |   93.56   |  91.3  |
 +------------+-------+-------+-------+--------+-----------+--------+
 

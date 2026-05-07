@@ -868,9 +868,10 @@ class SegMANDecoder(BaseDecodeHead):
         self.linear_c4 = MLP(self.in_channels[-1], self.feat_proj_dim)
         self.linear_c3 = MLP(self.in_channels[2], self.feat_proj_dim)
         self.linear_c2 = MLP(self.in_channels[1], self.feat_proj_dim)
+        self.linear_c1 = MLP(self.in_channels[0], self.feat_proj_dim)
 
         self.linear_fuse = ConvModule(
-                        in_channels=self.feat_proj_dim*3,
+                        in_channels=self.feat_proj_dim*4, # *3 when c1 is ignore
                         out_channels=self.embed_dim,
                         kernel_size=1,
                         norm_cfg=dict(type='SyncBN', requires_grad=True))
@@ -933,11 +934,15 @@ class SegMANDecoder(BaseDecodeHead):
         _c4 = self.linear_c4(c4)
         _c3 = self.linear_c3(c3)
         _c2 = self.linear_c2(c2)
+        _c1 = self.linear_c1(c1)
    
-        _c4 = resize(_c4, size=inputs[1].size()[2:],mode='bilinear',align_corners=False).contiguous()
-        _c3 = resize(_c3, size=inputs[1].size()[2:],mode='bilinear',align_corners=False).contiguous()
+        _c4 = resize(_c4, size=inputs[0].size()[2:],mode='bilinear',align_corners=False).contiguous() # inputs[1]
+        _c3 = resize(_c3, size=inputs[0].size()[2:],mode='bilinear',align_corners=False).contiguous() # inputs[1]
+        _c2 = resize(_c2, size=inputs[0].size()[2:], mode='bilinear', align_corners=False)
+        # 统一上采样到c1分辨率，原本是上采样到c2分辨率
        
-        _c = self.linear_fuse(torch.cat([_c4, _c3, _c2], dim=1))
+        # _c = self.linear_fuse(torch.cat([_c4, _c3, _c2], dim=1))
+        _c = self.linear_fuse(torch.cat([_c4, _c3, _c2, _c1], dim=1))
         
         return _c, _c2, _c3, _c4
 
@@ -1029,10 +1034,11 @@ class SegMANDecoder(BaseDecodeHead):
     def forward(self, inputs):
         x = self._transform_inputs(inputs)
         x, c2, c3, c4 = self.forward_mlp_decoder(x)
+        _c = x # forward_mlp_decoder return _c, c2, c3, c4
         x = self.forward_winssm(x, c2, c3, c4)
         seg_logits = self.cls_seg(x)
         if self.training and self.boundary_enabled and self.boundary_loss_weight > 0:
-            boundary_logits = self.boundary_head(x)
+            boundary_logits = self.boundary_head(_c) # boundary head的挂载点应该改为接在linear_fuse输出的_c上，而不是forward_winssm之后的x
             return seg_logits, boundary_logits
         return seg_logits
 

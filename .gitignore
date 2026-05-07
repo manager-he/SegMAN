@@ -5,3 +5,4 @@ segmantation/data/
 **.whl
 work_dirs/
 **.zip
+__pycache__/
