@@ -11,8 +11,11 @@ import cv2
 import matplotlib.pyplot as plt
 import mmcv
 import numpy as np
+import torch
+import torch.nn as nn
 from mmseg.apis import inference_segmentor, init_segmentor
 from mmseg.datasets import build_dataset
+
 
 
 @dataclass
@@ -198,6 +201,124 @@ def draw_boundary(img_bgr: np.ndarray, mask_bin: np.ndarray, color: Tuple[int, i
     contours, _ = cv2.findContours(mask_bin.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(out, contours, -1, color, thickness)
     return out
+
+
+def normalize_map_to_unit_interval(map_2d: np.ndarray) -> np.ndarray:
+    map_2d = map_2d.astype(np.float32)
+    low = float(np.percentile(map_2d, 2))
+    high = float(np.percentile(map_2d, 98))
+    if high <= low + 1e-6:
+        low = float(np.min(map_2d))
+        high = float(np.max(map_2d))
+    map_2d = np.clip(map_2d, low, high)
+    return (map_2d - low) / (high - low + 1e-6)
+
+
+def feature_tensor_to_map(feat: torch.Tensor) -> np.ndarray:
+    if feat.dim() == 4:
+        feat = feat[0]
+    if feat.dim() == 3:
+        feat_map = feat.detach().float().abs().mean(dim=0).cpu().numpy()
+    elif feat.dim() == 2:
+        feat_map = feat.detach().float().cpu().numpy()
+    else:
+        raise ValueError(f"Unsupported feature shape: {tuple(feat.shape)}")
+    return normalize_map_to_unit_interval(feat_map)
+
+
+def colorize_map(map_2d: np.ndarray, cmap_name: str = "magma") -> np.ndarray:
+    cmap = plt.get_cmap(cmap_name)
+    rgb = cmap(map_2d)[..., :3]
+    return (rgb * 255).astype(np.uint8)
+
+
+def render_mask_panel(mask_bin: np.ndarray, color: Tuple[int, int, int] = (0, 255, 0)) -> np.ndarray:
+    panel = np.zeros((*mask_bin.shape, 3), dtype=np.uint8)
+    panel[mask_bin.astype(bool)] = np.array(color, dtype=np.uint8)
+    return panel
+
+
+def build_boundary_improvement_panels(
+    img_bgr: np.ndarray,
+    gt_bin: np.ndarray,
+    pred_bin: np.ndarray,
+    linear_fuse_map: np.ndarray,
+    vssm_map: np.ndarray,
+    boundary_map: np.ndarray,
+) -> List[Tuple[str, np.ndarray]]:
+    image_view = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    gt_view = render_mask_panel(gt_bin, color=(0, 220, 0))
+
+    pred_view = img_bgr.copy()
+    pred_view = overlay_mask(pred_view, gt_bin, (0, 255, 0), alpha=0.18)
+    pred_view = overlay_mask(pred_view, pred_bin, (255, 80, 0), alpha=0.30)
+    pred_view = draw_boundary(pred_view, gt_bin, (0, 255, 0), thickness=2)
+    pred_view = draw_boundary(pred_view, pred_bin, (255, 80, 0), thickness=2)
+    pred_view = cv2.cvtColor(pred_view, cv2.COLOR_BGR2RGB)
+
+    linear_view = colorize_map(linear_fuse_map, cmap_name="magma")
+    vssm_view = colorize_map(vssm_map, cmap_name="viridis")
+    boundary_view = colorize_map(boundary_map, cmap_name="inferno")
+
+    return [
+        ("Image", image_view),
+        ("GT mask", gt_view),
+        ("Final prediction", pred_view),
+        ("Linear fuse feature", linear_view),
+        ("VSSM feature", vssm_view),
+        ("Boundary head output", boundary_view),
+    ]
+
+
+def overlay_heatmap_on_image(
+    img_bgr: np.ndarray,
+    map_2d: np.ndarray,
+    cmap_name: str = "magma",
+    alpha: float = 0.55,
+) -> np.ndarray:
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+    heat_rgb = colorize_map(map_2d, cmap_name=cmap_name).astype(np.float32) / 255.0
+    out = (1.0 - alpha) * img_rgb + alpha * heat_rgb
+    return np.clip(out * 255.0, 0, 255).astype(np.uint8)
+
+
+def resize_map_like(map_2d: np.ndarray, ref_shape: Tuple[int, int]) -> np.ndarray:
+    if map_2d.shape == ref_shape:
+        return map_2d
+    return cv2.resize(map_2d, (ref_shape[1], ref_shape[0]), interpolation=cv2.INTER_LINEAR)
+
+
+def extract_focus_model_maps(model, img_path: str) -> Tuple[np.ndarray, Dict[str, torch.Tensor]]:
+    captured: Dict[str, torch.Tensor] = {}
+    handles = []
+
+    def _register(name: str, module: nn.Module) -> None:
+        def _hook(_module, _inputs, output):
+            if isinstance(output, (tuple, list)):
+                output = output[0]
+            if not torch.is_tensor(output):
+                raise TypeError(f"Hook output for {name} is not a tensor: {type(output)}")
+            captured[name] = output.detach()
+
+        handles.append(module.register_forward_hook(_hook))
+
+    _register("linear_fuse", model.decode_head.linear_fuse)
+    _register("vssm", model.decode_head.vssm)
+    _register("decoder_fusion", model.decode_head.cat)
+    _register("seg_logits", model.decode_head.conv_seg)
+
+    try:
+        pred = inference_segmentor(model, img_path)[0]
+    finally:
+        for handle in handles:
+            handle.remove()
+
+    required = ["linear_fuse", "vssm", "decoder_fusion"]
+    missing = [name for name in required if name not in captured]
+    if missing:
+        raise RuntimeError(f"Failed to capture required feature maps: {missing}")
+
+    return pred, captured
 
 
 def find_crop_bbox(gt_bin: np.ndarray, margin: int = 32) -> Tuple[int, int, int, int]:
@@ -443,6 +564,60 @@ def save_boundary_comparison(
     plt.close(fig)
 
 
+def render_boundary_improvement_tile(
+    img_bgr: np.ndarray,
+    gt_bin: np.ndarray,
+    pred_bin: np.ndarray,
+    linear_fuse_map: np.ndarray,
+    vssm_map: np.ndarray,
+    boundary_map: np.ndarray,
+    title: str,
+) -> plt.Figure:
+    fig, axes = plt.subplots(1, 6, figsize=(20.0, 3.1))
+    panels = build_boundary_improvement_panels(
+        img_bgr=img_bgr,
+        gt_bin=gt_bin,
+        pred_bin=pred_bin,
+        linear_fuse_map=linear_fuse_map,
+        vssm_map=vssm_map,
+        boundary_map=boundary_map,
+    )
+
+    for ax, (panel_title, panel_img) in zip(axes.flat, panels):
+        ax.imshow(panel_img)
+        ax.set_title(panel_title, fontsize=9)
+        ax.axis("off")
+
+    fig.subplots_adjust(left=0.003, right=0.997, top=0.93, bottom=0.03, wspace=0.02)
+    return fig
+
+
+def save_boundary_improvement_overview(
+    out_path: str,
+    tile_images: List[np.ndarray],
+    tile_titles: List[str],
+    n_cols: int = 1,
+    title: str = "Boundary Improvement Overview",
+) -> None:
+    if not tile_images:
+        return
+    n_items = len(tile_images)
+    n_rows = int(np.ceil(n_items / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(12.6 * n_cols, 2.85 * n_rows))
+    axes = np.array(axes).reshape(n_rows, n_cols)
+
+    for idx, ax in enumerate(axes.flat):
+        if idx < n_items:
+            ax.imshow(tile_images[idx])
+            ax.set_title(tile_titles[idx], fontsize=9, pad=2)
+        ax.axis("off")
+
+    fig.suptitle(title)
+    fig.subplots_adjust(left=0.005, right=0.995, top=0.97, bottom=0.01, hspace=0.01, wspace=0.01)
+    fig.savefig(out_path, bbox_inches="tight")
+    plt.close(fig)
+
+
 def save_dsc_bucket_figures(
     out_dir: str,
     sample_key: str,
@@ -542,6 +717,7 @@ def main() -> None:
     ensure_dir(osp.join(args.out_dir, "cases", "success"))
     ensure_dir(osp.join(args.out_dir, "cases", "failure"))
     ensure_dir(osp.join(args.out_dir, "cases", "boundary_improvement"))
+    ensure_dir(osp.join(args.out_dir, "cases", "boundary_improvement_rich"))
     ensure_dir(osp.join(args.out_dir, "dsc_buckets"))
     ensure_dir(osp.join(args.out_dir, "stats"))
 
@@ -682,19 +858,11 @@ def main() -> None:
     # 固定2行5列
     if success_top_images:
         n_cols = 5
-        n_items = len(success_top_images)
-        # 补空白
-        while len(success_top_images) < 10:
-            blank = np.ones_like(success_top_images[0]) * 255
-            success_top_images.append(blank)
-            success_bottom_images.append(blank)
-            success_top_titles.append("")
-            success_bottom_titles.append("")
         save_two_row_overview(
-            success_top_images[:10],
-            success_bottom_images[:10],
-            success_top_titles[:10],
-            success_bottom_titles[:10],
+            success_top_images,
+            success_bottom_images,
+            success_top_titles,
+            success_bottom_titles,
             osp.join(args.out_dir, "cases", "success_overview.png"),
             title="Successful Cases Overview",
             n_cols=n_cols,
@@ -737,18 +905,11 @@ def main() -> None:
 
     if failure_top_images:
         n_cols = 5
-        n_items = len(failure_top_images)
-        while len(failure_top_images) < 10:
-            blank = np.ones_like(failure_top_images[0]) * 255
-            failure_top_images.append(blank)
-            failure_bottom_images.append(blank)
-            failure_top_titles.append("")
-            failure_bottom_titles.append("")
         save_two_row_overview(
-            failure_top_images[:10],
-            failure_bottom_images[:10],
-            failure_top_titles[:10],
-            failure_bottom_titles[:10],
+            failure_top_images,
+            failure_bottom_images,
+            failure_top_titles,
+            failure_bottom_titles,
             osp.join(args.out_dir, "cases", "failure_overview.png"),
             title="Failure Cases Overview",
             n_cols=n_cols,
@@ -782,6 +943,98 @@ def main() -> None:
             gt_bin=gt_bin,
             method_preds=pred_dict,
             focus_name=focus_name,
+        )
+
+    # Rich boundary-improvement overview for the focus model only.
+    rich_tile_images: List[np.ndarray] = []
+    rich_tile_titles: List[str] = []
+    focus_method_cfg = next(m for m in valid_methods if m.name == focus_name)
+    focus_model = init_segmentor(
+        focus_method_cfg.config,
+        checkpoint=focus_method_cfg.checkpoint,
+        device=args.device,
+        CLASSES=getattr(dataset, "CLASSES", None),
+        PALETTE=getattr(dataset, "PALETTE", None),
+    )
+    if not hasattr(focus_model.decode_head, "boundary_head"):
+        raise RuntimeError(
+            "Focus model does not expose boundary_head. "
+            "Please use a boundary-enabled checkpoint for rich boundary visualizations."
+        )
+
+    try:
+        for rank, (idx, gain) in enumerate(selected, start=1):
+            img = mmcv.imread(sample_meta[idx]["img_path"])
+            gt_bin = sample_meta[idx]["gt_bin"]
+            pred_mask, captured = extract_focus_model_maps(focus_model, sample_meta[idx]["img_path"])
+            pred_mask = resize_mask_like(pred_mask, gt_bin.astype(np.uint8))
+            pred_bin = (pred_mask == args.class_id)
+
+            linear_fuse_map = feature_tensor_to_map(captured["linear_fuse"])
+            vssm_map = feature_tensor_to_map(captured["vssm"])
+            boundary_logits = focus_model.decode_head.boundary_head(captured["linear_fuse"])
+            boundary_prob = torch.sigmoid(boundary_logits)
+            boundary_map = feature_tensor_to_map(boundary_prob)
+
+            linear_map_resized = resize_map_like(linear_fuse_map, img.shape[:2])
+            vssm_map_resized = resize_map_like(vssm_map, img.shape[:2])
+            boundary_map_resized = resize_map_like(boundary_map, img.shape[:2])
+
+            if rank == 1:
+                flowchart_dir = osp.join(
+                    args.out_dir,
+                    "cases",
+                    "boundary_improvement",
+                    f"flowchart_sample_idx{idx}",
+                )
+                ensure_dir(flowchart_dir)
+                flow_panels = build_boundary_improvement_panels(
+                    img_bgr=img,
+                    gt_bin=gt_bin,
+                    pred_bin=pred_bin,
+                    linear_fuse_map=linear_map_resized,
+                    vssm_map=vssm_map_resized,
+                    boundary_map=boundary_map_resized,
+                )
+                for panel_idx, (panel_name, panel_img_rgb) in enumerate(flow_panels, start=1):
+                    safe_name = panel_name.lower().replace(" ", "_")
+                    panel_path = osp.join(flowchart_dir, f"{panel_idx:02d}_{safe_name}.png")
+                    mmcv.imwrite(panel_img_rgb[:, :, ::-1], panel_path)
+
+            tile = render_boundary_improvement_tile(
+                img_bgr=img,
+                gt_bin=gt_bin,
+                pred_bin=pred_bin,
+                linear_fuse_map=linear_map_resized,
+                vssm_map=vssm_map_resized,
+                boundary_map=boundary_map_resized,
+                title=(
+                    f"Sample #{rank} | idx={idx} | gain={gain:.3f} | "
+                    f"DSC={float(records_by_img[idx][focus_name]['dsc']):.3f} | "
+                    f"BF1={float(records_by_img[idx][focus_name]['boundary_f1']):.3f}"
+                ),
+            )
+            tile_img = figure_to_image(tile)
+            rich_tile_images.append(tile_img)
+            rich_tile_titles.append(f"idx={idx} | gain={gain:.3f}")
+
+            tile_out = osp.join(
+                args.out_dir,
+                "cases",
+                "boundary_improvement_rich",
+                f"{rank:02d}_idx{idx}_gain{gain:.3f}.png",
+            )
+            mmcv.imwrite(tile_img[:, :, ::-1], tile_out)
+    finally:
+        del focus_model
+
+    if rich_tile_images:
+        save_boundary_improvement_overview(
+            out_path=osp.join(args.out_dir, "cases", "boundary_improvement_overview.png"),
+            tile_images=rich_tile_images,
+            tile_titles=rich_tile_titles,
+            n_cols=1,
+            title="Boundary Improvement Overview with Internal Features",
         )
 
     # Size-bucket analysis for focus method
